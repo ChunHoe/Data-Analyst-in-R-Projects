@@ -1,0 +1,125 @@
+---
+title: "Guided Project: Analyzing CIA Factbook Data Using SQLite and R"
+author: "Chun Hoe Leung"
+output: html_notebook
+---
+
+### 1. Intro
+For this project, I'll work with data from the [CIA World Factbook] (https://www.cia.gov/library/publications/the-world-factbook/), a compendium of statistics about all of the countries on Earth. The Factbook contains demographic information like:
+
+1. population - The population as of 2015.
+2. population_growth - The annual population growth rate, as a percentage.
+3. area - The total land and water area.
+
+The data are publicly available and can be accessed [here](https://github.com/factbook/factbook.sql/releases). The file I'll be working with is *factbook.db*. I'll practice some newfound R and SQLite skills on this database and create some useful visualizations of the data.
+
+### 2. Overview of the Data
+**Import libraries RSQLite and DBI**
+```{r}
+library(RSQLite)
+library(DBI)
+```
+**Import factbook.db and List all tables**
+```{r}
+conn<-dbConnect(SQLite(),"C:/Users/Familie Leung/Documents/CHL/DataQuest R/Guided Project Analyzing CIA Factbook Data Using SQLite and R/factbook.db")
+dbListTables(conn)
+```
+**Explore each column in table facts**
+```{r}
+query0<-"PRAGMA TABLE_INFO(facts)"
+result0<-dbGetQuery(conn,query0)
+print(result0)
+```
+**Explore number of rows in table facts**
+```{r}
+query00<-"SELECT COUNT(id) FROM facts"
+result00<-dbGetQuery(conn,query00)
+print(result00)
+```
+
+
+**Write and run a query that returns the first 5 rows of the facts table in the database.**
+```{r}
+query1<-"SELECT * FROM facts LIMIT 5"
+result1<-dbGetQuery(conn,query1)
+print(result1)
+```
+
+
+### 3. Summary Statistics
+The descriptions for some of the columns:
+1. name > The name of the country.
+2. area > The total land and sea area of the country.
+3. population > The country's population.
+4. population_growth > The country's population growth as a percentage.
+5. birth_rate > The country's birth rate, or the number of births a year per 1,000 people.
+6. death_rate > The country's death rate, or the number of death a year per 1,000 people.
+7. area > The country's total area (both land and water).
+8. area_land > The country's land area in square kilometers (https://www.cia.gov/library/publications/the-world-factbook/rankorder/2147rank.html).
+9. area_water > The country's waterarea in square kilometers.
+
+**Calculate summary statistics MIN() and MAX() for the 'population' and 'population_growth' variables and check for any outlier countries.**
+```{r}
+query2<-"SELECT MIN(population),MAX(population),MIN(population_growth),MAX(population_growth) FROM facts"
+result2<-dbGetQuery(conn,query2)
+result2
+```
+
+### 4. Exploring Outliers
+**Write a query that returns the countrie(s) with a population of 0**
+```{r}
+query3<-"SELECT * FROM facts WHERE (population=0)"
+result3<-dbGetQuery(conn,query3)
+result3
+```
+**Write a query that returns the countrie(s) with a population of 7256490011**
+```{r}
+query4<-"SELECT * FROM facts WHERE population=7256490011"
+result4<-dbGetQuery(conn,query4)
+result4
+```
+**Observations so far**
+The population variable contains outliers varying from 0 to 7.2billion.
+-Antartica has a population which equals 0
+-World has a population which equals 7.2billion
+
+### 5. Histograms
+**Exclude the countries Antartica and World in a revised query**
+```{r}
+query5<-"SELECT population,population_growth,birth_rate,death_rate FROM facts WHERE name!='Antarctica' AND name!='World'"
+facts<-dbGetQuery(conn,query5)
+facts
+```
+**Import libraries tidyr and ggplot2**
+```{r}
+library(tidyr)
+library(ggplot2)
+```
+**Tidy data**
+```{r}
+tidy_facts<-facts%>%
+  gather(.,key="variable",value="value")
+tidy_facts
+```
+
+**Generate histograms for columns: population, population_growth, birth_rate,death_rate**
+```{r}
+ggplot(data=tidy_facts)+aes(x=value,fill=variable)+geom_histogram()+facet_grid(~variable)+labs(title="Histogram")
+```
+Histogram birth_rate
+```{r}
+ggplot(data=facts)+aes(x=birth_rate)+geom_histogram()+theme(panel.background = element_rect(fill="white"))+labs(title="Histogram birth_rate",x="number of births a year per 1,000 people")
+```
+Histogram death_rate
+```{r}
+ggplot(data=facts)+aes(x=death_rate)+geom_histogram()+labs(title="Histogram deathth_rate",x="number of death a year per 1,000 people")
+```
+Histogram population
+```{r}
+ggplot(data=facts)+aes(x=population)+geom_histogram(bins=20)+labs(title="Histogram population")
+```
+Histogram population_growth
+```{r}
+ggplot(data=facts)+aes(x=population_growth)+geom_histogram()+labs(title="Histogram population_growth")
+```
+
