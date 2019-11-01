@@ -1,0 +1,372 @@
+---
+title: "Guided Project: Answering Business Questions using SQL"
+author: "Chun Hoe Leung"
+output: html_notebook
+---
+
+### 1. Intro
+I'll work with a modified version of a database called Chinook. The Chinook database contains information about various elements in a fictional digital music shop, such as artists, songs, and albums, as well as the shop's employees, customers, and the customers' purchases. All this information is contained in 11 tables. The Chinook database is provided in the chinook.db file. 
+![Alt text](C:/Users/Familie Leung/Documents/CHL/DataQuest R/Guided Project Answering Business Questions using SQL/chinook-schema.svg)
+
+
+### 2. Creating Helper Functions
+**Import the RSQLite and DBI libraries.**
+```{r}
+library(RSQLite)
+library(DBI)
+
+db<-'C:/Users/Familie Leung/Documents/CHL/DataQuest R/Guided Project Answering Business Questions using SQL/chinook.db'
+```
+**Create a run_query() function that takes in a SQL query as an argument and returns the result in a dataframe.**
+```{r}
+run_query<-function(query) {
+  conn=dbConnect(SQLite(),db)
+  result<-dbGetQuery(conn,query)
+  dbDisconnect(conn)
+  return(result)
+}
+```
+
+**Create a show_tables() function that calls the run_query() function to return a list of all tables and views in the database.**
+```{r}
+show_tables<-function(){
+  q="SELECT name,type FROM sqlite_master WHERE type IN ('table','view')"
+  return(run_query(q))
+}
+```
+**Run the show_tables() function.**
+```{r}
+show_tables()
+```
+
+### 3. Selecting Albums to Purchase
+**Write a query that returns each genre, with the number of tracks sold in the USA:in absolute numbers and in percentages**
+```{r}
+query1<-'
+WITH
+  tracks_sold_usa AS
+  (
+  SELECT 
+    COUNT(il.track_id) tracks_sold_usa_total
+  FROM invoice_line il
+  INNER JOIN invoice i ON il.invoice_id=i.invoice_id
+  GROUP BY i.billing_country
+  HAVING i.billing_country="USA"
+  )
+  
+SELECT 
+  g.name genre,
+  COUNT(il.track_id) tracks_sold_numbers,
+  (CAST(COUNT(il.track_id)as Float)/(SELECT * FROM tracks_sold_usa))*100 tracks_sold_percentages,
+  i.billing_country
+FROM invoice_line il
+INNER JOIN track t ON il.track_id=t.track_id
+INNER JOIN genre g ON t.genre_id=g.genre_id
+INNER JOIN (
+            SELECT * FROM invoice
+            WHERE billing_country="USA"
+           ) i ON il.invoice_id=i.invoice_id
+GROUP BY g.genre_id
+ORDER BY 3 DESC
+'
+run_query(query1)
+```
+**Create a plot to show this data**
+```{r}
+library(ggplot2)
+ggplot(data=run_query(query1))+aes(x=genre,y=tracks_sold_percentages,fill=genre)+geom_bar(stat='identity')+coord_flip()
+```
+
+**Write a paragraph that interprets the data and makes a recommendation for the three artists whose albums we should purchase for the store, based on sales of tracks from their genres.**
+
+Among the genres represented in our list of 4 albums, punk, blues and pop are the highest rated. Therefore, we should recommend:
+
+- Red Tone (Punk)
+- Slim Jim Bites (Blues)
+- Meteor and the Girls (Pop)
+
+By far though, rock makes up the majority of the sales. To better capture sales in the USA, we might want to ask the record label if they have any up-and-coming rock bands.
+
+### 4. Analyzing Employee Sales Performance
+
+**Write a query that finds the total dollar amount of sales assigned to each sales support agent within the company. Add any extra attributes for that employee that you find are relevant to the analysis.**
+```{r}
+query2<-'
+SELECT DISTINCT title FROM employee
+'
+run_query(query2)
+```
+
+```{r}
+query3<-'
+WITH 
+  sales_support_agent AS
+    (
+    SELECT * FROM employee
+    WHERE title="Sales Support Agent"
+    ),
+  total_sales_per_customer AS
+    (
+    SELECT 
+      c.*,
+      COUNT(i.invoice_id) number_of_invoices,
+      SUM(i.total) total
+    FROM customer c
+    INNER JOIN invoice i ON c.customer_id=i.customer_id
+    GROUP BY c.customer_id
+    )
+SELECT
+  ssa.employee_id,
+  ssa.first_name||" "||ssa.last_name employee_name,
+  ssa.title,
+  ssa.birthdate,
+  ssa.hire_date,
+  COUNT(tspc.customer_id) number_of_customers,
+  COUNT(DISTINCT(tspc.country)) number_of_countries,
+  SUM(tspc.number_of_invoices) number_of_invoices,
+  SUM(tspc.total) total_sales
+FROM sales_support_agent ssa
+LEFT JOIN total_sales_per_customer tspc ON ssa.employee_id=tspc.support_rep_id
+GROUP BY ssa.employee_id
+'
+run_query(query3)
+```
+
+**Create a plot of the results of your query.**
+```{r}
+ggplot(data=run_query(query3))+aes(x=employee_name,y=total_sales,fill=employee_name)+geom_bar(stat='identity')
+```
+
+**Write a short statement describing your results, and provide a possible interpretation.**
+The company Chinook counts 3 sales support agents:
+-Jane Peacock 
+-Margaret Park
+-Steve Johnson
+Looking from [A] total sales, [B] number of customers, [C] number of invoices perspectives, Jane Peacock (also the youngest) outperforms from the rest of her collegues. Followed by Margaret Park (oldest) and Steve Johnson.
+However there might be more reasons behind these figures that we haven't analyzed, such as the relationship between their language skills and their customers. Steve serves customers from 13 different countries (most), while Jane serves only 10 (least).
+
+### 5. Analyzing Sales by Country
+
+**Write a query that collates data on purchases from different countries. For each country, include: [1] total number of customers,[2] total value of sales,[3] average value of sales per customer, [4] average order value. Where a country has only one customer, collect them into an "Other" group.**
+```{r}
+query4<-'
+WITH
+  country_one_customer AS
+    (
+    SELECT 
+      C.country,
+      CASE
+        WHEN COUNT(DISTINCT(c.customer_id))=1 THEN "Other"
+        ELSE c.country
+        END
+        AS other_country2
+      FROM customer c
+      GROUP BY country
+      HAVING other_country2="Other"
+    )
+
+SELECT
+  CASE
+    WHEN c.country IN (SELECT country FROM country_one_customer) THEN "Other"
+    ELSE c.country
+    END
+    AS country2,
+  COUNT(DISTINCT(c.customer_id)) total_number_of_customers,
+  COUNT(c.customer_id) total_number_of_invoices,
+  SUM(i.total) total_value_of_sales,
+  SUM(i.total)/COUNT(DISTINCT(c.customer_id)) average_value_of_sales_per_customer,
+  SUM(i.total)/COUNT(c.customer_id) average_value_of_sales_per_invoice
+FROM customer c
+LEFT JOIN invoice i ON c.customer_id=i.customer_id
+GROUP BY country2
+ORDER BY 4 DESC
+'
+run_query(query4)
+```
+**The results should be sorted by the total sales from highest to lowest, with the "Other" group at the very bottom.**
+```{r}
+query5<-'
+WITH
+  country_one_customer AS
+    (
+    SELECT 
+      C.country,
+      CASE
+        WHEN COUNT(DISTINCT(c.customer_id))=1 THEN "Other"
+        ELSE c.country
+        END
+        AS other_country2
+      FROM customer c
+      GROUP BY country
+      HAVING other_country2="Other"
+    )
+
+SELECT
+  CASE
+    WHEN c.country IN (SELECT country FROM country_one_customer) THEN "Other"
+    ELSE c.country
+    END
+    AS country2,
+  COUNT(DISTINCT(c.customer_id)) total_number_of_customers,
+  COUNT(c.customer_id) total_number_of_invoices,
+  SUM(i.total) total_value_of_sales,
+  SUM(i.total)/COUNT(DISTINCT(c.customer_id)) average_value_of_sales_per_customer,
+  SUM(i.total)/COUNT(c.customer_id) average_value_of_sales_per_invoice,
+  CASE
+    WHEN c.country IN (SELECT country FROM country_one_customer) THEN 1
+    ELSE 0
+    END
+    AS sort
+FROM customer c
+LEFT JOIN invoice i ON c.customer_id=i.customer_id
+GROUP BY country2
+ORDER BY 7 ASC, 4 DESC
+'
+run_query(query5)
+```
+
+### 6. Visualizing Sales by Country
+
+**For each dimension, create a visualization which demonstrates the data we collated in the previous step**
+```{r}
+ggplot(data=run_query(query5))+aes(x = reorder(country2,total_value_of_sales),y=total_value_of_sales,fill=country2)+geom_bar(stat='identity')+coord_flip()+labs(title="Total Sales by country",x = "Country",y = "Total Sales")
+
+```
+```{r}
+ggplot(data=run_query(query5))+aes(x = reorder(country2,total_number_of_customers),y=total_number_of_customers,fill=country2)+geom_bar(stat='identity')+coord_flip()+labs(title="Total Customers by country",x = "Country",y = "Total Sales")
+```
+
+
+
+```{r}
+ggplot(data=run_query(query5))+aes(x = reorder(country2,average_value_of_sales_per_customer),y=average_value_of_sales_per_customer,fill=country2)+geom_bar(stat='identity')+coord_flip()+labs(title="Average Sales per Customer by country",x = "Country",y = "Total Sales")
+```
+```{r}
+ggplot(data=run_query(query5))+aes(x = reorder(country2,total_number_of_customers),y=total_number_of_customers,fill=country2)+geom_bar(stat='identity')+coord_flip()+labs(title="Total customers by country",x = "Country",y = "Total Sales")
+```
+
+**Write a few sentences interpreting your data and visualizations, and make one or more recommendations to the marketing team on which countries have potential for growth**
+
+USA is by far the biggest market for Chinook, followed by Canada. However, the average sales per customer is less then most of the other countries. The average sales per customer is the highest in Czech Republic and has a lot of potential to grow.
+
+### 7. Albums vs. Individual Tracks
+
+**Write a query that categorizes each invoice as either an album purchase or not, and calculates the following summary statistics: number of invoices,percentage of invoices**
+```{r}
+test<-'
+WITH
+  invoice_first_track AS
+    (
+    SELECT
+      invoice_id,
+      MIN(track_id) first_track
+    FROM invoice_line
+    GROUP BY invoice_id
+    ),
+  invoiced_tracks AS
+    (
+    SELECT
+      track_id
+    FROM invoice_line il
+    WHERE il.invoice_id IN (SELECT invoice_id FROM invoice_first_track)
+    ),
+  album_tracks AS
+    (
+    SELECT 
+      t.track_id
+    FROM track t
+    WHERE t.album_id= (
+                      SELECT 
+                        t.album_id
+                      FROM track t
+                      WHERE t.track_id IN (SELECT first_track FROM invoice_first_track)
+                      )
+    )
+  
+SELECT
+  album_purchase,
+  COUNT(invoice_id) number_of_invoices,
+  COUNT(invoice_id)/(SELECT * FROM invoice) percentage_of_invoices
+FROM
+  (
+  SELECT
+    ift.*,
+    CASE
+      WHEN
+          (
+          SELECT * FROM album_tracks
+          EXCEPT
+          SELECT * FROM invoiced_tracks
+          ) IS NULL
+      AND
+          (
+          SELECT * FROM invoiced_tracks
+          EXCEPT
+          SELECT * FROM album_tracks
+          ) IS NULL
+      THEN "yes"
+      ELSE "no"
+      END AS "album_purchase"
+  FROM invoice_first_track ift
+  )
+GROUP BY 1
+'
+run_query(test)
+```
+
+```{r}
+albums_vs_tracks = '
+WITH invoice_first_track AS
+    (
+     SELECT
+         il.invoice_id invoice_id,
+         MIN(il.track_id) first_track_id
+     FROM invoice_line il
+     GROUP BY 1
+    )
+SELECT
+    album_purchase,
+    COUNT(invoice_id) number_of_invoices,
+    CAST(count(invoice_id) AS FLOAT) / (
+                                         SELECT COUNT(*) FROM invoice
+                                      ) percent
+FROM
+    (
+    SELECT
+        ifs.*,
+        CASE
+            WHEN
+                 (
+                  SELECT t.track_id FROM track t
+                  WHERE t.album_id = (
+                                      SELECT t2.album_id FROM track t2
+                                      WHERE t2.track_id = ifs.first_track_id
+                                     ) 
+                  EXCEPT 
+                  SELECT il2.track_id FROM invoice_line il2
+                  WHERE il2.invoice_id = ifs.invoice_id
+                 ) IS NULL
+             AND
+                 (
+                  SELECT il2.track_id FROM invoice_line il2
+                  WHERE il2.invoice_id = ifs.invoice_id
+                  EXCEPT 
+                  SELECT t.track_id FROM track t
+                  WHERE t.album_id = (
+                                      SELECT t2.album_id FROM track t2
+                                      WHERE t2.track_id = ifs.first_track_id
+                                     ) 
+                 ) IS NULL
+             THEN "yes"
+             ELSE "no"
+         END AS "album_purchase"
+     FROM invoice_first_track ifs
+    )
+GROUP BY album_purchase;
+'
+run_query(albums_vs_tracks)
+```
+
+**Write one to two sentences explaining your findings, and making a prospective recommendation on whether the Chinook store should continue to buy full albums from record companies.**
+
+Album purchases account for almost a quarter of the total sales, so it is inadvisable to change strategy to just purchase the most popular tracks.
